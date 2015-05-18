@@ -193,46 +193,98 @@
              * @param    object options
              * @return   promise
              */
-            google: function(clientId, appScope, options) {
-                var deferred = $q.defer();
-                if(window.cordova) {
-                    var cordovaMetadata = cordova.require("cordova/plugin_list").metadata;
-                    if(cordovaMetadata.hasOwnProperty("cordova-plugin-inappbrowser") === true || cordovaMetadata.hasOwnProperty("org.apache.cordova.inappbrowser") === true) {
-                        var redirect_uri = "http://localhost/callback";
-                        if(options !== undefined) {
-                            if(options.hasOwnProperty("redirect_uri")) {
-                                redirect_uri = options.redirect_uri;
+                             google: function(clientId, appScope, options) {
+                    var deferred = $q.defer();
+                    if(window.cordova) {
+                        var cordovaMetadata = cordova.require("cordova/plugin_list").metadata;
+                        if(cordovaMetadata.hasOwnProperty("cordova-plugin-inappbrowser") === true || cordovaMetadata.hasOwnProperty("org.apache.cordova.inappbrowser") === true) {
+                            var redirect_uri = "http://localhost/callback";
+                            var accesstoken_uri = null
+                            var params = "approval_prompt=force&response_type=token&";
+                            if(options !== undefined) {
+                                if(options.hasOwnProperty("redirect_uri")) {
+                                    redirect_uri = options.redirect_uri;
+                                }
+                                if(options.hasOwnProperty("accesstoken_uri")) {
+                                    params = "access_type=offline&approval_prompt=auto&response_type=code&"
+                                    accesstoken_uri = options.accesstoken_uri;
+                                }
                             }
+                            var supressExit = false;
+                            var browserRef = window.open('https://accounts.google.com/o/oauth2/auth?'+params+'client_id=' + clientId + '&redirect_uri=' + redirect_uri + '&scope=' + appScope.join(" ") + '', '_blank', 'location=no,clearsessioncache=yes,clearcache=yes');
+                            browserRef.addEventListener("loadstart", function(event) {
+                                console.log(event.url);
+                                if((event.url).indexOf(redirect_uri) === 0) {
+
+                                    supressExit = true;
+                                    browserRef.removeEventListener("exit",function(event){});
+                                    browserRef.close();
+
+                                    if (accesstoken_uri==null) {
+                                        var callbackResponse = (event.url).split("#")[1];
+                                        var responseParameters = (callbackResponse).split("&");
+                                        var parameterMap = [];
+                                        for (var i = 0; i < responseParameters.length; i++) {
+                                            parameterMap[responseParameters[i].split("=")[0]] = responseParameters[i].split("=")[1];
+                                        }
+
+                                        if (parameterMap.access_token !== undefined && parameterMap.access_token !== null) {
+                                            deferred.resolve({
+                                                access_token: parameterMap.access_token,
+                                                token_type: parameterMap.token_type,
+                                                expires_in: parameterMap.expires_in
+                                            });
+                                        } else {
+                                            deferred.reject("Problem authenticating");
+                                        }
+                                    } else
+                                    {
+                                        // http://localhost/callback?code=4/btjTeVGdYW1yx4AEcpvMgsTY4qQ0-z-shuDQLlGU9Pc.EqDVzSI8jpsRcp7tdiljKKYNoyrFmgI&authuser=0&prompt=consent&session_state=579350cd2a919b5edfd56d482670c55b8c6ce103..63d5#
+                                        var callbackResponse = (event.url).split("?")[1];
+
+                                        var responseParameters = (callbackResponse).split("&");
+
+
+                                        var code = null;
+                                        for (var i = 0; i < responseParameters.length; i++) {
+                                            if (responseParameters[i].split("=")[0]=="code")
+                                                code = responseParameters[i].split("=")[1];
+                                        }
+
+                                        console.log("Invoking server based access token: "+accesstoken_uri);
+                                        // Server based access token conversion
+                                        $http.defaults.headers.post['Content-Type'] = 'application/x-www-form-urlencoded';
+
+                                        $http({
+                                            method: "post",
+                                            url: accesstoken_uri,
+                                            data: "provider=google&code="+code
+                                        })
+                                            .success(function (data) {
+                                                deferred.resolve(data);
+                                            })
+                                            .error(function (data, status) {
+                                                deferred.reject("Problem authenticating");
+                                            })
+                                    }
+                                }
+                            });
+                            browserRef.addEventListener('exit', function(event) {
+                                if (!supressExit) {
+                                    console.log("*** exit ***")
+                                    deferred.reject("The sign in flow was canceled");
+                                }
+                            });
+                        } else {
+                            deferred.reject("Could not find InAppBrowser plugin");
                         }
-                        var browserRef = window.open('https://accounts.google.com/o/oauth2/auth?client_id=' + clientId + '&redirect_uri=' + redirect_uri + '&scope=' + appScope.join(" ") + '&approval_prompt=force&response_type=token', '_blank', 'location=no,clearsessioncache=yes,clearcache=yes');
-                        browserRef.addEventListener("loadstart", function(event) {
-                            if((event.url).indexOf(redirect_uri) === 0) {
-                           		browserRef.removeEventListener("exit",function(event){});
-                            	browserRef.close();
-                                var callbackResponse = (event.url).split("#")[1];
-                                var responseParameters = (callbackResponse).split("&");
-                                var parameterMap = [];
-                                for(var i = 0; i < responseParameters.length; i++) {
-                                    parameterMap[responseParameters[i].split("=")[0]] = responseParameters[i].split("=")[1];
-                                }
-                                if(parameterMap.access_token !== undefined && parameterMap.access_token !== null) {
-                                    deferred.resolve({ access_token: parameterMap.access_token, token_type: parameterMap.token_type, expires_in: parameterMap.expires_in });
-                                } else {
-                                    deferred.reject("Problem authenticating");
-                                }
-                            }
-                        });
-                        browserRef.addEventListener('exit', function(event) {
-                            deferred.reject("The sign in flow was canceled");
-                        });
                     } else {
-                        deferred.reject("Could not find InAppBrowser plugin");
+                        deferred.reject("Cannot authenticate via a web browser");
                     }
-                } else {
-                    deferred.reject("Cannot authenticate via a web browser");
-                }
-                return deferred.promise;
-            },
+                    return deferred.promise;
+                },
+
+             
 
             /*
              * Sign into the GitHub service
@@ -287,46 +339,84 @@
              * @param    object options
              * @return   promise
              */
-            facebook: function(clientId, appScope, options) {
-                var deferred = $q.defer();
-                if(window.cordova) {
-                    var cordovaMetadata = cordova.require("cordova/plugin_list").metadata;
-                    if(cordovaMetadata.hasOwnProperty("cordova-plugin-inappbrowser") === true || cordovaMetadata.hasOwnProperty("org.apache.cordova.inappbrowser") === true) {
-                        var redirect_uri = "http://localhost/callback";
-                        if(options !== undefined) {
-                            if(options.hasOwnProperty("redirect_uri")) {
-                                redirect_uri = options.redirect_uri;
+                facebook: function(clientId, appScope, options) {
+                    var deferred = $q.defer();
+                    if(window.cordova) {
+                        var cordovaMetadata = cordova.require("cordova/plugin_list").metadata;
+                        if(cordovaMetadata.hasOwnProperty("cordova-plugin-inappbrowser") === true || cordovaMetadata.hasOwnProperty("org.apache.cordova.inappbrowser") === true) {
+                            var redirect_uri = "http://localhost/callback";
+                            var accesstoken_uri = null;
+                            var supressExit = false;
+
+                            if(options !== undefined) {
+                                if(options.hasOwnProperty("redirect_uri")) {
+                                    redirect_uri = options.redirect_uri;
+                                }
+                                if (options.hasOwnProperty("accesstoken_uri"))
+                                {
+                                    accesstoken_uri = options.accesstoken_uri;
+                                }
                             }
+                            var browserRef = window.open('https://www.facebook.com/v2.0/dialog/oauth?client_id=' + clientId + '&redirect_uri=' + redirect_uri + '&response_type=token&scope=' + appScope.join(","), '_blank', 'location=no,clearsessioncache=yes,clearcache=yes');
+                            browserRef.addEventListener('loadstart', function(event) {
+                                if((event.url).indexOf(redirect_uri) === 0) {
+                                    browserRef.removeEventListener("exit",function(event){});
+                                    browserRef.close();
+                                    supressExit = true;
+                                    var callbackResponse = (event.url).split("#")[1];
+                                    var responseParameters = (callbackResponse).split("&");
+                                    var parameterMap = [];
+                                    for(var i = 0; i < responseParameters.length; i++) {
+                                        parameterMap[responseParameters[i].split("=")[0]] = responseParameters[i].split("=")[1];
+                                    }
+                                    if(parameterMap.access_token !== undefined && parameterMap.access_token !== null) {
+                                        if (accesstoken_uri==null) {
+                                            deferred.resolve({
+                                                access_token: parameterMap.access_token,
+                                                expires_in: parameterMap.expires_in
+                                            });
+                                        } else
+                                        {
+                                            // Convert short lived token to long lived token in the server
+                                            console.log("Invoking server based access token: "+accesstoken_uri);
+
+                                            $http.defaults.headers.post['Content-Type'] = 'application/x-www-form-urlencoded';
+                                            $http({
+                                                method: "post",
+                                                url: accesstoken_uri,
+                                                data: "provider=facebook&access_token=" + parameterMap.access_token
+                                            })
+                                                .success(function (data) {
+                                                    deferred.resolve(data);
+                                                })
+                                                .error(function (data, status) {
+                                                    deferred.reject("Problem authenticating");
+                                                })
+                                                .finally(function () {
+                                                    setTimeout(function () {
+                                                        browserRef.close();
+                                                    }, 10);
+                                                });
+                                        }
+                                    } else {
+                                        deferred.reject("Problem authenticating");
+                                    }
+                                }
+                            });
+                            browserRef.addEventListener('exit', function(event) {
+                                if (!supressExit) {
+                                    deferred.reject("The sign in flow was canceled");
+                                }
+                            });
+                        } else {
+                            deferred.reject("Could not find InAppBrowser plugin");
                         }
-                        var browserRef = window.open('https://www.facebook.com/v2.0/dialog/oauth?client_id=' + clientId + '&redirect_uri=' + redirect_uri + '&response_type=token&scope=' + appScope.join(","), '_blank', 'location=no,clearsessioncache=yes,clearcache=yes');
-                        browserRef.addEventListener('loadstart', function(event) {
-                            if((event.url).indexOf(redirect_uri) === 0) {
-                            	browserRef.removeEventListener("exit",function(event){});
-                            	browserRef.close();
-                                var callbackResponse = (event.url).split("#")[1];
-                                var responseParameters = (callbackResponse).split("&");
-                                var parameterMap = [];
-                                for(var i = 0; i < responseParameters.length; i++) {
-                                    parameterMap[responseParameters[i].split("=")[0]] = responseParameters[i].split("=")[1];
-                                }
-                                if(parameterMap.access_token !== undefined && parameterMap.access_token !== null) {
-                                    deferred.resolve({ access_token: parameterMap.access_token, expires_in: parameterMap.expires_in });
-                                } else {
-                                    deferred.reject("Problem authenticating");
-                                }
-                            }
-                        });
-                        browserRef.addEventListener('exit', function(event) {
-                            deferred.reject("The sign in flow was canceled");
-                        });
                     } else {
-                        deferred.reject("Could not find InAppBrowser plugin");
+                        deferred.reject("Cannot authenticate via a web browser");
                     }
-                } else {
-                    deferred.reject("Cannot authenticate via a web browser");
-                }
-                return deferred.promise;
-            },
+                    return deferred.promise;
+                },
+
 
             /*
              * Sign into the LinkedIn service
@@ -337,48 +427,83 @@
              * @param    string state
              * @return   promise
              */
-            linkedin: function(clientId, clientSecret, appScope, state, options) {
-                var deferred = $q.defer();
-                if(window.cordova) {
-                	var redirect_uri = "http://localhost/callback";
+                linkedin: function(clientId, clientSecret, appScope, state, options) {
+                    var deferred = $q.defer();
+                    if(window.cordova) {
+                        var redirect_uri = "http://localhost/callback";
+                        var accesstoken_uri = null;
                         if(options !== undefined) {
                             if(options.hasOwnProperty("redirect_uri")) {
                                 redirect_uri = options.redirect_uri;
                             }
-                        }
-                        
-                    var cordovaMetadata = cordova.require("cordova/plugin_list").metadata;
-                    if(cordovaMetadata.hasOwnProperty("cordova-plugin-inappbrowser") === true || cordovaMetadata.hasOwnProperty("org.apache.cordova.inappbrowser") === true) {
-                        var browserRef = window.open('https://www.linkedin.com/uas/oauth2/authorization?client_id=' + clientId + '&redirect_uri='+redirect_uri+'&scope=' + appScope.join(" ") + '&response_type=code&state=' + state, '_blank', 'location=no,clearsessioncache=yes,clearcache=yes');
-                        browserRef.addEventListener('loadstart', function(event) {
-                            if((event.url).indexOf(redirect_uri) === 0) {
-                                requestToken = (event.url).split("code=")[1];
-                                $http.defaults.headers.post['Content-Type'] = 'application/x-www-form-urlencoded';
-                                $http({method: "post", url: "https://www.linkedin.com/uas/oauth2/accessToken", data: "client_id=" + clientId + "&client_secret=" + clientSecret + "&redirect_uri="+redirect_uri+"&grant_type=authorization_code" + "&code=" + requestToken })
-                                    .success(function(data) {
-                                        deferred.resolve(data);
-                                    })
-                                    .error(function(data, status) {
-                                        deferred.reject("Problem authenticating");
-                                    })
-                                    .finally(function() {
-                                        setTimeout(function() {
-                                            browserRef.close();
-                                        }, 10);
-                                    });
+                            if (options.hasOwnProperty("accesstoken_uri"))
+                            {
+                                accesstoken_uri = options.accesstoken_uri;
                             }
-                        });
-                        browserRef.addEventListener('exit', function(event) {
-                            deferred.reject("The sign in flow was canceled");
-                        });
+                        }
+
+                        var cordovaMetadata = cordova.require("cordova/plugin_list").metadata;
+                        if(cordovaMetadata.hasOwnProperty("cordova-plugin-inappbrowser") === true || cordovaMetadata.hasOwnProperty("org.apache.cordova.inappbrowser") === true) {
+                            var browserRef = window.open('https://www.linkedin.com/uas/oauth2/authorization?client_id=' + clientId + '&redirect_uri='+redirect_uri+'&scope=' + appScope.join(" ") + '&response_type=code&state=' + state, '_blank', 'location=no,clearsessioncache=yes,clearcache=yes');
+                            browserRef.addEventListener('loadstart', function(event) {
+
+                                if((event.url).indexOf(redirect_uri) === 0) {
+                                    requestToken = (event.url).split("code=")[1];
+
+                                    $http.defaults.headers.post['Content-Type'] = 'application/x-www-form-urlencoded';
+
+                                    if (accesstoken_uri==null) {
+                                        $http({
+                                            method: "post",
+                                            url: "https://www.linkedin.com/uas/oauth2/accessToken",
+                                            data: "client_id=" + clientId + "&client_secret=" + clientSecret + "&redirect_uri=" + redirect_uri + "&grant_type=authorization_code" + "&code=" + requestToken
+                                        })
+                                            .success(function (data) {
+                                                deferred.resolve(data);
+                                            })
+                                            .error(function (data, status) {
+                                                deferred.reject("Problem authenticating");
+                                            })
+                                            .finally(function () {
+                                                setTimeout(function () {
+                                                    browserRef.close();
+                                                }, 10);
+                                            });
+                                    } else
+                                    {
+                                        console.log("Invoking server based access token: "+accesstoken_uri);
+                                        // Server based access token conversion
+                                        $http({
+                                            method: "post",
+                                            url: accesstoken_uri,
+                                            data: "provider=linkedin&client_id=" + clientId + "&redirect_uri=" + redirect_uri + "&grant_type=authorization_code" + "&code=" + requestToken
+                                        })
+                                            .success(function (data) {
+                                                deferred.resolve(data);
+                                            })
+                                            .error(function (data, status) {
+                                                deferred.reject("Problem authenticating");
+                                            })
+                                            .finally(function () {
+                                                setTimeout(function () {
+                                                    browserRef.close();
+                                                }, 10);
+                                            });
+                                    }
+                                }
+                            });
+                            browserRef.addEventListener('exit', function(event) {
+                                deferred.reject("The sign in flow was canceled");
+                            });
+                        } else {
+                            deferred.reject("Could not find InAppBrowser plugin");
+                        }
                     } else {
-                        deferred.reject("Could not find InAppBrowser plugin");
+                        deferred.reject("Cannot authenticate via a web browser");
                     }
-                } else {
-                    deferred.reject("Cannot authenticate via a web browser");
-                }
-                return deferred.promise;
-            },
+                    return deferred.promise;
+                },
+
 
             /*
              * Sign into the Instagram service
@@ -535,109 +660,149 @@
              * @param    string clientSecret
              * @return   promise
              */
-            twitter: function(clientId, clientSecret, options) {
-                var deferred = $q.defer();
-                if(window.cordova) {
-                    var cordovaMetadata = cordova.require("cordova/plugin_list").metadata;
-                    if(cordovaMetadata.hasOwnProperty("cordova-plugin-inappbrowser") === true || cordovaMetadata.hasOwnProperty("org.apache.cordova.inappbrowser") === true) {
-                        var redirect_uri = "http://localhost/callback";
-                        if(options !== undefined) {
-                            if(options.hasOwnProperty("redirect_uri")) {
-                                redirect_uri = options.redirect_uri;
+                twitter: function(clientId, clientSecret, options) {
+                    var deferred = $q.defer();
+                    if(window.cordova) {
+                        var cordovaMetadata = cordova.require("cordova/plugin_list").metadata;
+                        if(cordovaMetadata.hasOwnProperty("cordova-plugin-inappbrowser") === true || cordovaMetadata.hasOwnProperty("org.apache.cordova.inappbrowser") === true) {
+                            var redirect_uri = "http://localhost/callback";
+                            var accesstoken_uri = null;
+                            if(options !== undefined) {
+                                if(options.hasOwnProperty("redirect_uri")) {
+                                    redirect_uri = options.redirect_uri;
+                                }
+                                if (options.hasOwnProperty("accesstoken_uri"))
+                                {
+                                    accesstoken_uri = options.accesstoken_uri;
+                                }
                             }
-                        }
 
-                        if(typeof jsSHA !== "undefined") {
-                            var oauthObject = {
-                                oauth_consumer_key: clientId,
-                                oauth_nonce: $cordovaOauthUtility.createNonce(10),
-                                oauth_signature_method: "HMAC-SHA1",
-                                oauth_timestamp: Math.round((new Date()).getTime() / 1000.0),
-                                oauth_version: "1.0"
-                            };
-                            var signatureObj = $cordovaOauthUtility.createSignature("POST", "https://api.twitter.com/oauth/request_token", oauthObject,  { oauth_callback: redirect_uri }, clientSecret);
-                            $http({
-                                method: "post",
-                                url: "https://api.twitter.com/oauth/request_token",
-                                headers: {
-                                    "Authorization": signatureObj.authorization_header,
-                                    "Content-Type": "application/x-www-form-urlencoded"
-                                },
-                                data: "oauth_callback=" + encodeURIComponent(redirect_uri)
-                            })
-                                .success(function(requestTokenResult) {
-                                    var requestTokenParameters = (requestTokenResult).split("&");
-                                    var parameterMap = {};
-                                    for(var i = 0; i < requestTokenParameters.length; i++) {
-                                        parameterMap[requestTokenParameters[i].split("=")[0]] = requestTokenParameters[i].split("=")[1];
-                                    }
-                                    if(parameterMap.hasOwnProperty("oauth_token") === false) {
-                                        deferred.reject("Oauth request token was not received");
-                                    }
-                                    var browserRef = window.open('https://api.twitter.com/oauth/authenticate?oauth_token=' + parameterMap.oauth_token, '_blank', 'location=no,clearsessioncache=yes,clearcache=yes');
-                                    browserRef.addEventListener('loadstart', function(event) {
-                                        if((event.url).indexOf(redirect_uri) === 0) {
-                                            var callbackResponse = (event.url).split("?")[1];
-                                            var responseParameters = (callbackResponse).split("&");
-                                            var parameterMap = {};
-                                            for(var i = 0; i < responseParameters.length; i++) {
-                                                parameterMap[responseParameters[i].split("=")[0]] = responseParameters[i].split("=")[1];
-                                            }
-                                            if(parameterMap.hasOwnProperty("oauth_verifier") === false) {
-                                                deferred.reject("Browser authentication failed to complete.  No oauth_verifier was returned");
-                                            }
-                                            delete oauthObject.oauth_signature;
-                                            oauthObject.oauth_token = parameterMap.oauth_token;
-                                            var signatureObj = $cordovaOauthUtility.createSignature("POST", "https://api.twitter.com/oauth/access_token", oauthObject,  { oauth_verifier: parameterMap.oauth_verifier }, clientSecret);
-                                            $http({
-                                                method: "post",
-                                                url: "https://api.twitter.com/oauth/access_token",
-                                                headers: {
-                                                    "Authorization": signatureObj.authorization_header
-                                                },
-                                                params: {
-                                                    "oauth_verifier": parameterMap.oauth_verifier
-                                                }
-                                            })
-                                                .success(function(result) {
-                                                    var accessTokenParameters = result.split("&");
-                                                    var parameterMap = {};
-                                                    for(var i = 0; i < accessTokenParameters.length; i++) {
-                                                        parameterMap[accessTokenParameters[i].split("=")[0]] = accessTokenParameters[i].split("=")[1];
-                                                    }
-                                                    if(parameterMap.hasOwnProperty("oauth_token_secret") === false) {
-                                                        deferred.reject("Oauth access token was not received");
-                                                    }
-                                                    deferred.resolve(parameterMap);
-                                                })
-                                                .error(function(error) {
-                                                    deferred.reject(error);
-                                                })
-                                                .finally(function() {
-                                                    setTimeout(function() {
-                                                        browserRef.close();
-                                                    }, 10);
-                                                });
-                                        }
-                                    });
-                                    browserRef.addEventListener('exit', function(event) {
-                                        deferred.reject("The sign in flow was canceled");
-                                    });
+                            if(typeof jsSHA !== "undefined") {
+                                var oauthObject = {
+                                    oauth_consumer_key: clientId,
+                                    oauth_nonce: $cordovaOauthUtility.createNonce(10),
+                                    oauth_signature_method: "HMAC-SHA1",
+                                    oauth_timestamp: Math.round((new Date()).getTime() / 1000.0),
+                                    oauth_version: "1.0"
+                                };
+                                var signatureObj = $cordovaOauthUtility.createSignature("POST", "https://api.twitter.com/oauth/request_token", oauthObject,  { oauth_callback: redirect_uri }, clientSecret);
+                                $http({
+                                    method: "post",
+                                    url: "https://api.twitter.com/oauth/request_token",
+                                    headers: {
+                                        "Authorization": signatureObj.authorization_header,
+                                        "Content-Type": "application/x-www-form-urlencoded"
+                                    },
+                                    data: "oauth_callback=" + encodeURIComponent(redirect_uri)
                                 })
-                                .error(function(error) {
-                                    deferred.reject(error);
-                                });
+                                    .success(function(requestTokenResult) {
+                                        var requestTokenParameters = (requestTokenResult).split("&");
+                                        var parameterMap = {};
+                                        for(var i = 0; i < requestTokenParameters.length; i++) {
+                                            parameterMap[requestTokenParameters[i].split("=")[0]] = requestTokenParameters[i].split("=")[1];
+                                        }
+                                        if(parameterMap.hasOwnProperty("oauth_token") === false) {
+                                            deferred.reject("Oauth request token was not received");
+                                        }
+                                        var tokenSecret = parameterMap.oauth_token_secret;
+
+
+                                        var browserRef = window.open('https://api.twitter.com/oauth/authenticate?oauth_token=' + parameterMap.oauth_token, '_blank', 'location=no,clearsessioncache=yes,clearcache=yes');
+                                        browserRef.addEventListener('loadstart', function(event) {
+                                            if((event.url).indexOf(redirect_uri) === 0) {
+                                                var callbackResponse = (event.url).split("?")[1];
+                                                var responseParameters = (callbackResponse).split("&");
+                                                var parameterMap = {};
+                                                for(var i = 0; i < responseParameters.length; i++) {
+                                                    parameterMap[responseParameters[i].split("=")[0]] = responseParameters[i].split("=")[1];
+                                                }
+                                                if(parameterMap.hasOwnProperty("oauth_verifier") === false) {
+                                                    deferred.reject("Browser authentication failed to complete.  No oauth_verifier was returned");
+                                                }
+
+                                                if (accesstoken_uri==null) {
+                                                    delete oauthObject.oauth_signature;
+                                                    oauthObject.oauth_token = parameterMap.oauth_token;
+                                                    var signatureObj = $cordovaOauthUtility.createSignature("POST", "https://api.twitter.com/oauth/access_token", oauthObject, {oauth_verifier: parameterMap.oauth_verifier}, clientSecret);
+                                                    $http({
+                                                        method: "post",
+                                                        url: "https://api.twitter.com/oauth/access_token",
+                                                        headers: {
+                                                            "Authorization": signatureObj.authorization_header
+                                                        },
+                                                        params: {
+                                                            "oauth_verifier": parameterMap.oauth_verifier
+                                                        }
+                                                    })
+                                                        .success(function (result) {
+                                                            var accessTokenParameters = result.split("&");
+                                                            var parameterMap = {};
+                                                            for (var i = 0; i < accessTokenParameters.length; i++) {
+                                                                parameterMap[accessTokenParameters[i].split("=")[0]] = accessTokenParameters[i].split("=")[1];
+                                                            }
+                                                            if (parameterMap.hasOwnProperty("oauth_token_secret") === false) {
+                                                                deferred.reject("Oauth access token was not received");
+                                                            }
+                                                            deferred.resolve(parameterMap);
+                                                        })
+                                                        .error(function (error) {
+                                                            deferred.reject(error);
+                                                        })
+                                                        .finally(function () {
+                                                            setTimeout(function () {
+                                                                browserRef.close();
+                                                            }, 10);
+                                                        });
+                                                } else {
+                                                    console.log("Invoking server based access token: " + accesstoken_uri);
+                                                    $http.defaults.headers.post['Content-Type'] = 'application/x-www-form-urlencoded';
+                                                    $http({
+                                                        method: "post",
+                                                        url: accesstoken_uri,
+                                                        data: "provider=twitter&oauth_verifier=" + parameterMap.oauth_verifier+"&oauth_token=" + parameterMap.oauth_token+"&oauth_token_secret=" + tokenSecret
+
+                                                    })
+                                                        .success(function (result) {
+                                                            var accessTokenParameters = result.split("&");
+                                                            var parameterMap = {};
+                                                            for (var i = 0; i < accessTokenParameters.length; i++) {
+                                                                parameterMap[accessTokenParameters[i].split("=")[0]] = accessTokenParameters[i].split("=")[1];
+                                                            }
+                                                            if (parameterMap.hasOwnProperty("oauth_token_secret") === false) {
+                                                                deferred.reject("Oauth access token was not received");
+                                                            }
+                                                            deferred.resolve(parameterMap);
+                                                        })
+                                                        .error(function (error) {
+                                                            deferred.reject(error);
+                                                        })
+                                                        .finally(function () {
+                                                            setTimeout(function () {
+                                                                browserRef.close();
+                                                            }, 10);
+                                                        });
+                                                }
+                                            }
+                                        });
+                                        browserRef.addEventListener('exit', function(event) {
+                                            deferred.reject("The sign in flow was canceled");
+                                        });
+                                    })
+                                    .error(function(error) {
+                                        deferred.reject(error);
+                                    });
+                            } else {
+                                deferred.reject("Missing jsSHA JavaScript library");
+                            }
                         } else {
-                            deferred.reject("Missing jsSHA JavaScript library");
+                            deferred.reject("Could not find InAppBrowser plugin");
                         }
                     } else {
-                        deferred.reject("Could not find InAppBrowser plugin");
+                        deferred.reject("Cannot authenticate via a web browser");
                     }
-                } else {
-                    deferred.reject("Cannot authenticate via a web browser");
-                }
-                return deferred.promise;
-            },
+                    return deferred.promise;
+                },
+
 
             /*
             * Sign into the Meetup service
